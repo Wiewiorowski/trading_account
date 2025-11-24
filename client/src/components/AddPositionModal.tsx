@@ -21,7 +21,6 @@ const AddPositionModal: React.FC<Props> = ({ onClose, onSubmit }) => {
     };
 
     return (
-    return (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
             <div className="bg-gray-900 rounded-2xl shadow-2xl w-full max-w-md border border-gray-800 overflow-hidden transform transition-all">
                 <div className="flex justify-between items-center p-6 border-b border-gray-800 bg-gray-800/50">

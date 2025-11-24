@@ -3,6 +3,7 @@ import WebSocket from 'ws';
 import dotenv from 'dotenv';
 import { handleTradeMessage } from './marketData';
 
+// @ts-ignore
 import finnhub from 'finnhub';
 
 dotenv.config();
@@ -23,18 +24,34 @@ export const finnhubClient = new finnhub.DefaultApi({
 let socket: WebSocket | null = null;
 let reconnectAttempts = 0;
 const subscriptions = new Set<string>();
+let wasRateLimited = false;
 
 export function connectFinnhubWS() {
+    if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
+        console.log('Finnhub WS already connected or connecting');
+        return;
+    }
+
     const url = `wss://ws.finnhub.io?token=${FINNHUB_API_KEY}`;
     console.log('Connecting to Finnhub WS...');
 
     socket = new WebSocket(url);
 
-    socket.on('open', () => {
+    socket.on('open', async () => {
         console.log('✅ Finnhub WS Connected');
         reconnectAttempts = 0;
-        // Resubscribe to all symbols on reconnect
-        subscriptions.forEach(symbol => subscribeSymbol(symbol));
+        wasRateLimited = false;
+
+        // Resubscribe to all symbols on reconnect with delay to avoid rate limits
+        const symbols = Array.from(subscriptions);
+        for (const symbol of symbols) {
+            if (socket?.readyState === WebSocket.OPEN) {
+                console.log(`Resubscribing to ${symbol}`);
+                socket.send(JSON.stringify({ type: 'subscribe', symbol }));
+                // Wait 1 second between subscriptions to be safe
+                await new Promise(resolve => setTimeout(resolve, 1000));
+            }
+        }
     });
 
     socket.on('message', (data: WebSocket.Data) => {
@@ -49,8 +66,16 @@ export function connectFinnhubWS() {
     });
 
     socket.on('close', () => {
-        const delay = Math.min(30000, (reconnectAttempts + 1) * 5000);
+        let delay = Math.min(30000, (reconnectAttempts + 1) * 5000);
+
+        if (wasRateLimited) {
+            console.warn('⚠️ Rate limit hit. Waiting longer before reconnecting...');
+            delay = 60000; // Wait 1 minute if rate limited
+        }
+
         console.warn(`⚠️ Finnhub WS Disconnected. Reconnecting in ${delay / 1000}s...`);
+        socket = null;
+
         setTimeout(() => {
             reconnectAttempts++;
             connectFinnhubWS();
@@ -59,19 +84,21 @@ export function connectFinnhubWS() {
 
     socket.on('error', (err) => {
         console.error('❌ Finnhub WS Error:', err.message);
+        if (err.message.includes('429')) {
+            wasRateLimited = true;
+        }
     });
 }
 
 export function subscribeSymbol(symbol: string) {
-    if (!socket || socket.readyState !== WebSocket.OPEN) {
-        subscriptions.add(symbol); // Queue for when open
+    if (subscriptions.has(symbol)) {
         return;
     }
+    subscriptions.add(symbol);
 
-    if (!subscriptions.has(symbol)) {
+    if (socket && socket.readyState === WebSocket.OPEN) {
         console.log(`Subscribing to ${symbol}`);
         socket.send(JSON.stringify({ type: 'subscribe', symbol }));
-        subscriptions.add(symbol);
     }
 }
 
